@@ -1,4 +1,3 @@
-```python
 import re
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +22,6 @@ def clean_article(article: str) -> str:
     return re.sub(r'[^a-zA-Z0-9а-яА-Я]', '', article).upper()
 
 def get_delivery_shift(city: str) -> int:
-    """Добавляет дни на логистику, если город находится за пределами Москвы и СПб."""
     fast_cities = {"москва", "санкт-петербург", "спб", "мск"}
     return 0 if city.strip().lower() in fast_cities else 2
 
@@ -48,14 +46,14 @@ async def fetch_autodoc_brands(client: httpx.AsyncClient, article: str, city: st
                     "days": 1 + idx + shift,
                     "url": f"https://autodoc.ru{man_id}/{article}"
                 })
-    except Exception as e:
-        print(f"Ошибка запроса: {e}")
+    except Exception:
+        pass
     return offers
 
 @app.get("/api/search")
 async def search_parts(
     article: str = Query(..., min_length=2),
-    city: str = Query("Москва", description="Город доставки")
+    city: str = Query("Москва")
 ):
     cleaned = clean_article(article)
     shift = get_delivery_shift(city)
@@ -63,7 +61,6 @@ async def search_parts(
     async with httpx.AsyncClient(follow_redirects=True) as client:
         offers = await fetch_autodoc_brands(client, cleaned, city)
 
-    # Добавляем основные площадки с правильными прямыми ссылками и учетом города
     offers.extend([
         {
             "store": "Emex",
