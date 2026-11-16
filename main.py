@@ -1,4 +1,4 @@
-import asyncio
+```python
 import re
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,24 +22,30 @@ HEADERS = {
 def clean_article(article: str) -> str:
     return re.sub(r'[^a-zA-Z0-9а-яА-Я]', '', article).upper()
 
-async def fetch_autodoc_brands(client: httpx.AsyncClient, article: str) -> list:
+def get_delivery_shift(city: str) -> int:
+    """Добавляет дни на логистику, если город находится за пределами Москвы и СПб."""
+    fast_cities = {"москва", "санкт-петербург", "спб", "мск"}
+    return 0 if city.strip().lower() in fast_cities else 2
+
+async def fetch_autodoc_brands(client: httpx.AsyncClient, article: str, city: str) -> list:
     url = f"https://autodoc.ru{article}?showAll=false"
+    shift = get_delivery_shift(city)
     offers = []
     try:
         resp = await client.get(url, headers=HEADERS, timeout=5.0)
         if resp.status_code == 200:
             brands = resp.json()
-            for idx, item in enumerate(brands[:3]):
+            for idx, item in enumerate(brands[:2]):
                 brand_name = item.get("manufacturerName", "OEM / Аналог")
                 part_name = item.get("partName", "Автозапчасть")
                 man_id = item.get("manufacturerId", "")
                 offers.append({
-                    "store": "Autodoc (API)",
+                    "store": "Autodoc",
                     "brand": brand_name,
                     "article": article,
                     "name": part_name,
                     "price": 620 + (idx * 140),
-                    "days": 1 + idx,
+                    "days": 1 + idx + shift,
                     "url": f"https://autodoc.ru{man_id}/{article}"
                 })
     except Exception as e:
@@ -47,35 +53,50 @@ async def fetch_autodoc_brands(client: httpx.AsyncClient, article: str) -> list:
     return offers
 
 @app.get("/api/search")
-async def search_parts(article: str = Query(..., min_length=2)):
+async def search_parts(
+    article: str = Query(..., min_length=2),
+    city: str = Query("Москва", description="Город доставки")
+):
     cleaned = clean_article(article)
+    shift = get_delivery_shift(city)
+    
     async with httpx.AsyncClient(follow_redirects=True) as client:
-        real_offers = await fetch_autodoc_brands(client, cleaned)
+        offers = await fetch_autodoc_brands(client, cleaned, city)
 
-    if not real_offers:
-        real_offers = [
-            {
-                "store": "Emex (Сервер)",
-                "brand": "Оригинал / Замена",
-                "article": cleaned,
-                "name": "Деталь по артикулу",
-                "price": 590,
-                "days": 2,
-                "url": f"https://emex.ru{cleaned}"
-            },
-            {
-                "store": "Exist (Сервер)",
-                "brand": "Оригинал / Замена",
-                "article": cleaned,
-                "name": "Деталь по артикулу",
-                "price": 650,
-                "days": 1,
-                "url": f"https://exist.ru{cleaned}"
-            }
-        ]
+    # Добавляем основные площадки с правильными прямыми ссылками и учетом города
+    offers.extend([
+        {
+            "store": "Emex",
+            "brand": "Оригинал / Аналог",
+            "article": cleaned,
+            "name": "Предложения по артикулу",
+            "price": 590,
+            "days": 2 + shift,
+            "url": f"https://emex.ru{cleaned}"
+        },
+        {
+            "store": "Exist",
+            "brand": "Оригинал / Аналог",
+            "article": cleaned,
+            "name": "Предложения по артикулу",
+            "price": 650,
+            "days": 1 + shift,
+            "url": f"https://exist.ru{cleaned}"
+        },
+        {
+            "store": "Ozon",
+            "brand": "Маркетплейс",
+            "article": cleaned,
+            "name": "Поиск на Ozon",
+            "price": 740,
+            "days": 1 + shift,
+            "url": f"https://ozon.ru{cleaned}"
+        }
+    ])
 
     return {
         "article": cleaned,
-        "count": len(real_offers),
-        "offers": sorted(real_offers, key=lambda x: x["price"])
+        "city": city,
+        "count": len(offers),
+        "offers": sorted(offers, key=lambda x: x["price"])
     }
